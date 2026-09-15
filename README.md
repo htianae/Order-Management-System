@@ -13,7 +13,7 @@ The application follows inquiries through quoting, purchasing, payment approvals
 - **Reports:** management dashboard, payment request summary, annual business summary, and business analysis.
 - **Files:** attach supporting documents and images to orders and items.
 - **Access control:** employee, manager, and administrator roles, with authenticated API access.
-- **AI assistant:** uses permission-scoped tools to query business data through the backend. DashScope/Qwen is the configured provider.
+- **AI-powered operations copilot:** transforms natural-language requests into permission-aware tool calls against real-time business data, delivering actionable insights across orders, payments, suppliers, delays, quotations, and performance analytics through a DashScope/Qwen-powered agentic workflow.
 
 The user management page is currently a placeholder. There is no public registration endpoint or bundled account seed; see [First login](#first-login).
 
