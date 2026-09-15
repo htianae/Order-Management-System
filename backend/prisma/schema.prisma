@@ -1,0 +1,585 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  EMPLOYEE
+  BOSS
+  ADMIN
+}
+
+enum OrderStatus {
+  INQUIRY
+  QUOTED
+  BID_WON
+  BID_LOST
+  PURCHASING
+  PURCHASE_PAYMENT
+  SUPPLIER_SHIPPED
+  ARRIVED_COMPANY
+  SHIPPED_TO_CUSTOMER
+  CUSTOMER_PAID
+  COMPLETED
+  LOST_ARCHIVED
+}
+
+enum BidResult {
+  PENDING
+  WON
+  LOST
+}
+
+enum QuoteDecision {
+  PENDING
+  SELECTED
+  REJECTED
+}
+
+enum PaymentStatus {
+  UNPAID
+  PARTIAL
+  PAID
+}
+
+enum PaymentApplicationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum ShippingApplicationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum InvoiceStatus {
+  NOT_RECEIVED
+  RECEIVED
+  ISSUED
+}
+
+enum CustomerPaymentStatus {
+  UNPAID
+  PARTIAL
+  PAID
+}
+
+enum InquiryResult {
+  PENDING
+  WON
+  LOST
+}
+
+enum FileCategory {
+  SUPPLIER_QUOTE
+  BID_CONTRACT
+  PURCHASE_CONTRACT
+  PAYMENT_APPLICATION
+  SHIPPING_APPLICATION
+  PRODUCT_IMAGE
+  SHIPPING_IMAGE
+  OTHER
+}
+
+enum FileTargetType {
+  ORDER
+  ORDER_ITEM
+  SUPPLIER_QUOTE
+  PURCHASE_INFO
+  SHIPPING_INFO
+  CUSTOMER_PAYMENT
+}
+
+model User {
+  id           String   @id @default(cuid())
+  username     String   @unique @db.VarChar(64)
+  passwordHash String   @map("password_hash")
+  displayName  String?  @map("display_name") @db.VarChar(80)
+  role         UserRole @default(EMPLOYEE)
+  phone        String?  @db.VarChar(32)
+  email        String?  @unique @db.VarChar(120)
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  createdOrders                Order[]                 @relation("OrderCreator")
+  ownedOrders                  Order[]                 @relation("OrderOwner")
+  supplierQuotes               SupplierQuote[]         @relation("SupplierQuoteCreator")
+  operatedStatusLogs           OrderStatusRecord[]     @relation("StatusOperator")
+  operatedItemStatusLogs       OrderItemStatusRecord[] @relation("ItemStatusOperator")
+  uploadedFiles                File[]                  @relation("FileUploader")
+  createdPaymentRecords        CustomerPayment[]       @relation("CustomerPaymentCreator")
+  createdInquiries             Inquiry[]               @relation("InquiryCreator")
+  createdShippingApplications  ShippingApplication[]   @relation("ShippingApplicationCreator")
+  approvedShippingApplications ShippingApplication[]   @relation("ShippingApplicationApprover")
+
+  @@index([role])
+  @@index([isActive])
+  @@map("users")
+}
+
+model Inquiry {
+  id             String   @id @default(cuid())
+  inquiryNo      String?  @map("inquiry_no") @db.VarChar(160)
+  inquiryCompany String   @map("inquiry_company") @db.VarChar(160)
+  inquiryPerson  String?  @map("inquiry_person") @db.VarChar(80)
+  inquiryDate    DateTime @map("inquiry_date")
+  remark         String?  @db.Text
+  creatorId      String   @map("creator_id")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  creator User          @relation("InquiryCreator", fields: [creatorId], references: [id], onDelete: Restrict)
+  items   InquiryItem[]
+
+  @@index([inquiryNo])
+  @@index([inquiryCompany])
+  @@index([inquiryDate])
+  @@index([creatorId])
+  @@index([createdAt])
+  @@map("inquiries")
+}
+
+model InquiryItem {
+  id           String        @id @default(cuid())
+  inquiryId    String        @map("inquiry_id")
+  lineNo       Int           @map("line_no")
+  materialCode String?       @map("material_code") @db.Text
+  materialName String        @map("material_name") @db.Text
+  modelSpec    String?       @map("model_spec") @db.Text
+  manufacturer String?       @db.Text
+  supplierName String?       @map("supplier_name") @db.Text
+  unit         String?       @db.Text
+  quantity     Decimal?      @db.Decimal(12, 3)
+  quotedPrice  Decimal?      @map("quoted_price") @db.Decimal(14, 2)
+  totalAmount  Decimal?      @map("total_amount") @db.Decimal(14, 2)
+  deliveryTime String?       @map("delivery_time") @db.Text
+  result       InquiryResult @default(PENDING)
+  winningPrice Decimal?      @map("winning_price") @db.Decimal(14, 2)
+  remark       String?       @db.Text
+  createdAt    DateTime      @default(now()) @map("created_at")
+  updatedAt    DateTime      @updatedAt @map("updated_at")
+
+  inquiry Inquiry @relation(fields: [inquiryId], references: [id], onDelete: Cascade)
+
+  @@unique([inquiryId, lineNo])
+  @@index([materialCode])
+  @@index([materialName])
+  @@index([modelSpec])
+  @@index([manufacturer])
+  @@index([supplierName])
+  @@index([result])
+  @@index([quotedPrice])
+  @@map("inquiry_items")
+}
+
+model Order {
+  id                 String      @id @default(cuid())
+  orderNo            String      @unique @map("order_no") @db.VarChar(80)
+  inquiryCompany     String      @map("inquiry_company") @db.VarChar(160)
+  declarationCompany String      @default("无") @map("declaration_company") @db.VarChar(160)
+  inquiryPerson      String?     @map("inquiry_person") @db.VarChar(80)
+  inquiryDate        DateTime    @map("inquiry_date")
+  inquiryNo          String?     @map("inquiry_no") @db.VarChar(80)
+  productCode        String?     @map("product_code") @db.VarChar(120)
+  productNameCn      String?     @map("product_name_cn") @db.VarChar(200)
+  modelSpec          String?     @map("model_spec") @db.VarChar(240)
+  quantity           Decimal?    @db.Decimal(12, 3)
+  currentStatus      OrderStatus @default(INQUIRY) @map("current_status")
+  bidResult          BidResult   @default(PENDING) @map("bid_result")
+  lostReason         String?     @map("lost_reason") @db.Text
+  quotedAmount       Decimal?    @map("quoted_amount") @db.Decimal(14, 2)
+  winningAmount      Decimal?    @map("winning_amount") @db.Decimal(14, 2)
+  purchaseCost       Decimal     @default(0) @map("purchase_cost") @db.Decimal(14, 2)
+  logisticsCost      Decimal     @default(0) @map("logistics_cost") @db.Decimal(14, 2)
+  otherCost          Decimal     @default(0) @map("other_cost") @db.Decimal(14, 2)
+  taxFee             Decimal     @default(0) @map("tax_fee") @db.Decimal(14, 2)
+  profit             Decimal?    @db.Decimal(14, 2)
+  profitRate         Decimal?    @map("profit_rate") @db.Decimal(8, 4)
+  bidContractFileId  String?     @unique @map("bid_contract_file_id")
+  creatorId          String      @map("creator_id")
+  ownerId            String?     @map("owner_id")
+  archivedAt         DateTime?   @map("archived_at")
+  createdAt          DateTime    @default(now()) @map("created_at")
+  updatedAt          DateTime    @updatedAt @map("updated_at")
+
+  creator              User                    @relation("OrderCreator", fields: [creatorId], references: [id], onDelete: Restrict)
+  owner                User?                   @relation("OrderOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  bidContractFile      File?                   @relation("OrderBidContractFile", fields: [bidContractFileId], references: [id], onDelete: SetNull)
+  items                OrderItem[]
+  supplierQuotes       SupplierQuote[]
+  statusRecords        OrderStatusRecord[]
+  itemStatusRecords    OrderItemStatusRecord[]
+  files                File[]                  @relation("OrderFiles")
+  purchaseInfos        PurchaseInfo[]
+  shippingInfos        ShippingInfo[]
+  shippingApplications ShippingApplication[]
+  customerPayments     CustomerPayment[]
+
+  @@index([inquiryCompany])
+  @@index([inquiryNo])
+  @@index([productCode])
+  @@index([productNameCn])
+  @@index([modelSpec])
+  @@index([currentStatus])
+  @@index([bidResult])
+  @@index([creatorId])
+  @@index([ownerId])
+  @@index([inquiryDate])
+  @@index([winningAmount])
+  @@index([createdAt])
+  @@index([currentStatus, createdAt])
+  @@index([creatorId, createdAt])
+  @@map("orders")
+}
+
+model OrderItem {
+  id                  String      @id @default(cuid())
+  orderId             String      @map("order_id")
+  lineNo              Int         @map("line_no")
+  materialCode        String?     @map("material_code") @db.VarChar(120)
+  materialDescription String?     @map("material_description") @db.Text
+  remark              String?     @db.Text
+  supplierRemark      String?     @map("supplier_remark") @db.Text
+  manufacturer        String?     @db.VarChar(160)
+  quantity            Decimal?    @db.Decimal(12, 3)
+  unit                String?     @db.VarChar(32)
+  quotedPrice         Decimal?    @map("quoted_price") @db.Decimal(14, 2)
+  taxIncludedTotal    Decimal?    @map("tax_included_total") @db.Decimal(14, 2)
+  purchaseQuantity    Decimal?    @map("purchase_quantity") @db.Decimal(12, 3)
+  purchaseUnitPrice   Decimal?    @map("purchase_unit_price") @db.Decimal(14, 2)
+  purchaseTotal       Decimal?    @map("purchase_total") @db.Decimal(14, 2)
+  deliveryTime        String?     @map("delivery_time") @db.VarChar(120)
+  inquiryRemark       String?     @map("inquiry_remark") @db.Text
+  applicantDepartment String?     @map("applicant_department") @db.VarChar(160)
+  currentStatus       OrderStatus @default(INQUIRY) @map("current_status")
+  bidResult           BidResult   @default(PENDING) @map("bid_result")
+  winningAmount       Decimal?    @map("winning_amount") @db.Decimal(14, 2)
+  lostReason          String?     @map("lost_reason") @db.Text
+  purchaseBatchId     String?     @map("purchase_batch_id")
+  createdAt           DateTime    @default(now()) @map("created_at")
+  updatedAt           DateTime    @updatedAt @map("updated_at")
+
+  order           Order                   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  statusRecords   OrderItemStatusRecord[]
+  supplierQuotes  SupplierQuote[]
+  purchaseInfo    PurchaseInfo?
+  purchaseBatch   PurchaseInfo?           @relation("PurchaseBatchItems", fields: [purchaseBatchId], references: [id], onDelete: SetNull)
+  shippingInfo    ShippingInfo?
+  customerPayment CustomerPayment?
+
+  @@unique([orderId, lineNo])
+  @@index([materialCode])
+  @@index([manufacturer])
+  @@index([currentStatus])
+  @@index([bidResult])
+  @@index([purchaseBatchId])
+  @@map("order_items")
+}
+
+model Supplier {
+  id          String   @id @default(cuid())
+  name        String   @unique @db.VarChar(160)
+  contactName String?  @map("contact_name") @db.VarChar(80)
+  phone       String?  @db.VarChar(32)
+  email       String?  @db.VarChar(120)
+  address     String?  @db.VarChar(240)
+  remark      String?  @db.Text
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  quotes SupplierQuote[]
+
+  @@index([name])
+  @@index([phone])
+  @@index([isActive])
+  @@map("suppliers")
+}
+
+model SupplierQuote {
+  id           String        @id @default(cuid())
+  orderId      String        @map("order_id")
+  orderItemId  String?       @map("order_item_id")
+  supplierId   String        @map("supplier_id")
+  contactName  String?       @map("contact_name") @db.VarChar(80)
+  phone        String?       @db.VarChar(32)
+  quotedPrice  Decimal       @map("quoted_price") @db.Decimal(14, 2)
+  deliveryTime String?       @map("delivery_time") @db.VarChar(120)
+  remark       String?       @db.Text
+  quoteFileId  String?       @unique @map("quote_file_id")
+  decision     QuoteDecision @default(PENDING)
+  isSelected   Boolean       @default(false) @map("is_selected")
+  createdById  String        @map("created_by_id")
+  createdAt    DateTime      @default(now()) @map("created_at")
+  updatedAt    DateTime      @updatedAt @map("updated_at")
+
+  order     Order      @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderItem OrderItem? @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  supplier  Supplier   @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  quoteFile File?      @relation("SupplierQuoteFile", fields: [quoteFileId], references: [id], onDelete: SetNull)
+  createdBy User       @relation("SupplierQuoteCreator", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@index([orderId])
+  @@index([orderItemId])
+  @@index([supplierId])
+  @@index([createdById])
+  @@index([decision])
+  @@index([isSelected])
+  @@index([quotedPrice])
+  @@map("supplier_quotes")
+}
+
+model OrderStatusRecord {
+  id         String       @id @default(cuid())
+  orderId    String       @map("order_id")
+  fromStatus OrderStatus? @map("from_status")
+  toStatus   OrderStatus  @map("to_status")
+  note       String?      @db.Text
+  operatorId String       @map("operator_id")
+  createdAt  DateTime     @default(now()) @map("created_at")
+
+  order    Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  operator User  @relation("StatusOperator", fields: [operatorId], references: [id], onDelete: Restrict)
+
+  @@index([orderId, createdAt])
+  @@index([toStatus])
+  @@index([operatorId])
+  @@index([createdAt])
+  @@map("order_status_records")
+}
+
+model OrderItemStatusRecord {
+  id          String       @id @default(cuid())
+  orderId     String       @map("order_id")
+  orderItemId String       @map("order_item_id")
+  fromStatus  OrderStatus? @map("from_status")
+  toStatus    OrderStatus  @map("to_status")
+  note        String?      @db.Text
+  operatorId  String       @map("operator_id")
+  createdAt   DateTime     @default(now()) @map("created_at")
+
+  order     Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderItem OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  operator  User      @relation("ItemStatusOperator", fields: [operatorId], references: [id], onDelete: Restrict)
+
+  @@index([orderId, createdAt])
+  @@index([orderItemId, createdAt])
+  @@index([toStatus])
+  @@index([operatorId])
+  @@index([createdAt])
+  @@map("order_item_status_records")
+}
+
+model File {
+  id           String          @id @default(cuid())
+  orderId      String?         @map("order_id")
+  uploaderId   String          @map("uploader_id")
+  category     FileCategory
+  targetType   FileTargetType? @map("target_type")
+  targetId     String?         @map("target_id")
+  originalName String          @map("original_name") @db.VarChar(240)
+  storagePath  String          @map("storage_path") @db.VarChar(500)
+  mimeType     String          @map("mime_type") @db.VarChar(120)
+  size         Int
+  createdAt    DateTime        @default(now()) @map("created_at")
+
+  order                  Order?               @relation("OrderFiles", fields: [orderId], references: [id], onDelete: Cascade)
+  uploader               User                 @relation("FileUploader", fields: [uploaderId], references: [id], onDelete: Restrict)
+  bidContractFor         Order?               @relation("OrderBidContractFile")
+  supplierQuoteFor       SupplierQuote?       @relation("SupplierQuoteFile")
+  purchaseContractFor    PurchaseInfo?        @relation("PurchaseContractFile")
+  paymentApplicationFor  PurchaseInfo?        @relation("PaymentApplicationFile")
+  shippingApplicationFor ShippingApplication? @relation("ShippingApplicationFile")
+
+  @@index([orderId])
+  @@index([uploaderId])
+  @@index([category])
+  @@index([targetType, targetId])
+  @@index([createdAt])
+  @@map("files")
+}
+
+model PurchaseInfo {
+  id                       String        @id @default(cuid())
+  orderId                  String        @map("order_id")
+  orderItemId              String?       @unique @map("order_item_id")
+  purchaseContractFileId   String?       @unique @map("purchase_contract_file_id")
+  paymentApplicationFileId String?       @unique @map("payment_application_file_id")
+  purchaseCost             Decimal       @default(0) @map("purchase_cost") @db.Decimal(14, 2)
+  supplierName             String?       @map("supplier_name") @db.VarChar(160)
+  deliveryTime             String?       @map("delivery_time") @db.VarChar(120)
+  paymentPercent           Decimal?      @map("payment_percent") @db.Decimal(5, 2)
+  bankName                 String?       @map("bank_name") @db.VarChar(240)
+  bankAccount              String?       @map("bank_account") @db.VarChar(120)
+  advancePaymentAmount     Decimal       @default(0) @map("advance_payment_amount") @db.Decimal(14, 2)
+  advancePaymentStatus     PaymentStatus @default(UNPAID) @map("advance_payment_status")
+  arrivalPaymentAmount     Decimal       @default(0) @map("arrival_payment_amount") @db.Decimal(14, 2)
+  arrivalPaymentStatus     PaymentStatus @default(UNPAID) @map("arrival_payment_status")
+  supplierLogisticsCompany String?       @map("supplier_logistics_company") @db.VarChar(160)
+  supplierTrackingNo       String?       @map("supplier_tracking_no") @db.VarChar(120)
+  invoiceStatus            InvoiceStatus @default(NOT_RECEIVED) @map("invoice_status")
+  createdAt                DateTime      @default(now()) @map("created_at")
+  updatedAt                DateTime      @updatedAt @map("updated_at")
+
+  order                      Order                        @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderItem                  OrderItem?                   @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  batchItems                 OrderItem[]                  @relation("PurchaseBatchItems")
+  purchaseContractFile       File?                        @relation("PurchaseContractFile", fields: [purchaseContractFileId], references: [id], onDelete: SetNull)
+  paymentApplicationFile     File?                        @relation("PaymentApplicationFile", fields: [paymentApplicationFileId], references: [id], onDelete: SetNull)
+  paymentApplications        PurchasePaymentApplication[]
+  shippingApplicationBatches ShippingApplicationBatch[]
+
+  @@index([orderId])
+  @@index([supplierName])
+  @@index([deliveryTime])
+  @@index([advancePaymentStatus])
+  @@index([arrivalPaymentStatus])
+  @@index([invoiceStatus])
+  @@index([supplierLogisticsCompany])
+  @@index([supplierTrackingNo])
+  @@map("purchase_infos")
+}
+
+model PurchasePaymentApplication {
+  id                   String                   @id @default(cuid())
+  orderId              String                   @map("order_id")
+  purchaseInfoId       String                   @map("purchase_info_id")
+  paymentPercent       Decimal                  @map("payment_percent") @db.Decimal(5, 2)
+  advancePaymentAmount Decimal                  @default(0) @map("advance_payment_amount") @db.Decimal(14, 2)
+  arrivalPaymentAmount Decimal                  @default(0) @map("arrival_payment_amount") @db.Decimal(14, 2)
+  bankName             String?                  @map("bank_name") @db.VarChar(240)
+  bankAccount          String?                  @map("bank_account") @db.VarChar(120)
+  remark               String?                  @db.Text
+  status               PaymentApplicationStatus @default(PENDING)
+  createdById          String?                  @map("created_by_id")
+  approvedById         String?                  @map("approved_by_id")
+  approvedAt           DateTime?                @map("approved_at")
+  createdAt            DateTime                 @default(now()) @map("created_at")
+  updatedAt            DateTime                 @updatedAt @map("updated_at")
+
+  purchaseInfo PurchaseInfo @relation(fields: [purchaseInfoId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@index([purchaseInfoId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("purchase_payment_applications")
+}
+
+model ShippingApplication {
+  id               String                    @id @default(cuid())
+  orderId          String                    @map("order_id")
+  fileId           String                    @unique @map("file_id")
+  logisticsCompany String                    @map("logistics_company") @db.VarChar(160)
+  trackingNo       String                    @map("tracking_no") @db.VarChar(120)
+  remark           String?                   @db.Text
+  status           ShippingApplicationStatus @default(PENDING)
+  createdById      String                    @map("created_by_id")
+  approvedById     String?                   @map("approved_by_id")
+  approvedAt       DateTime?                 @map("approved_at")
+  createdAt        DateTime                  @default(now()) @map("created_at")
+  updatedAt        DateTime                  @updatedAt @map("updated_at")
+
+  order      Order                      @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  file       File                       @relation("ShippingApplicationFile", fields: [fileId], references: [id], onDelete: Restrict)
+  createdBy  User                       @relation("ShippingApplicationCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  approvedBy User?                      @relation("ShippingApplicationApprover", fields: [approvedById], references: [id], onDelete: Restrict)
+  batches    ShippingApplicationBatch[]
+
+  @@index([orderId])
+  @@index([status])
+  @@index([createdById])
+  @@index([approvedById])
+  @@index([createdAt])
+  @@map("shipping_applications")
+}
+
+model ShippingApplicationBatch {
+  id                    String   @id @default(cuid())
+  shippingApplicationId String   @map("shipping_application_id")
+  purchaseInfoId        String   @map("purchase_info_id")
+  createdAt             DateTime @default(now()) @map("created_at")
+
+  shippingApplication ShippingApplication @relation(fields: [shippingApplicationId], references: [id], onDelete: Cascade)
+  purchaseInfo        PurchaseInfo        @relation(fields: [purchaseInfoId], references: [id], onDelete: Restrict)
+
+  @@unique([shippingApplicationId, purchaseInfoId])
+  @@index([purchaseInfoId])
+  @@map("shipping_application_batches")
+}
+
+model ShippingInfo {
+  id                       String    @id @default(cuid())
+  orderId                  String    @map("order_id")
+  orderItemId              String?   @unique @map("order_item_id")
+  shippingDate             DateTime? @map("shipping_date")
+  buyerCompany             String?   @map("buyer_company") @db.VarChar(160)
+  shippingAmount           Decimal?  @map("shipping_amount") @db.Decimal(14, 2)
+  weight                   String?   @db.VarChar(80)
+  packageCount             String?   @map("package_count") @db.VarChar(80)
+  packageSize              String?   @map("package_size") @db.VarChar(160)
+  contractNo               String?   @map("contract_no") @db.VarChar(120)
+  salesperson              String?   @db.VarChar(80)
+  goodsName                String?   @map("goods_name") @db.VarChar(200)
+  supplierBrand            String?   @map("supplier_brand") @db.VarChar(200)
+  shippingQuantity         String?   @map("shipping_quantity") @db.VarChar(80)
+  expectedDeliveryDate     DateTime? @map("expected_delivery_date")
+  needsWoodenBox           Boolean?  @map("needs_wooden_box")
+  woodenBoxPrice           String?   @map("wooden_box_price") @db.VarChar(120)
+  woodenBoxFreight         String?   @map("wooden_box_freight") @db.VarChar(120)
+  route                    String?   @db.VarChar(200)
+  needsTransfer            Boolean?  @map("needs_transfer")
+  transferLogistics        String?   @map("transfer_logistics") @db.VarChar(160)
+  estimatedTransferPrice   String?   @map("estimated_transfer_price") @db.VarChar(160)
+  billingWeight            String?   @map("billing_weight") @db.VarChar(80)
+  freightEstimate          String?   @map("freight_estimate") @db.Text
+  applicant                String?   @db.VarChar(80)
+  approver                 String?   @db.VarChar(80)
+  arrivedAtCompanyAt       DateTime? @map("arrived_at_company_at")
+  shippedToCustomerAt      DateTime? @map("shipped_to_customer_at")
+  customerLogisticsCompany String?   @map("customer_logistics_company") @db.VarChar(160)
+  customerTrackingNo       String?   @map("customer_tracking_no") @db.VarChar(120)
+  remark                   String?   @db.Text
+  createdAt                DateTime  @default(now()) @map("created_at")
+  updatedAt                DateTime  @updatedAt @map("updated_at")
+
+  order     Order      @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderItem OrderItem? @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@index([arrivedAtCompanyAt])
+  @@index([shippedToCustomerAt])
+  @@index([customerLogisticsCompany])
+  @@index([customerTrackingNo])
+  @@map("shipping_infos")
+}
+
+model CustomerPayment {
+  id          String                @id @default(cuid())
+  orderId     String                @map("order_id")
+  orderItemId String?               @unique @map("order_item_id")
+  status      CustomerPaymentStatus @default(UNPAID)
+  paidAmount  Decimal               @default(0) @map("paid_amount") @db.Decimal(14, 2)
+  paidAt      DateTime?             @map("paid_at")
+  remark      String?               @db.Text
+  createdById String                @map("created_by_id")
+  createdAt   DateTime              @default(now()) @map("created_at")
+  updatedAt   DateTime              @updatedAt @map("updated_at")
+
+  order     Order      @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderItem OrderItem? @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  createdBy User       @relation("CustomerPaymentCreator", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@index([orderId])
+  @@index([status])
+  @@index([paidAt])
+  @@index([createdById])
+  @@map("customer_payments")
+}
